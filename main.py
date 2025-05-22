@@ -54,7 +54,7 @@ def extract_depot_data(uploaded_file):
 
             sales = pd.to_numeric(group["Sales"], errors="coerce").fillna(0).abs().tolist()
             returns = pd.to_numeric(group["Sales Return"], errors="coerce").fillna(0).abs().tolist()
-            grand_totals = pd.to_numeric(group["Grand Total"], errors="coerce").fillna(0).abs().tolist()
+            grand_totals = pd.to_numeric(group["Grand Total"], errors="coerce").fillna(0).tolist()
 
             if len(sales) < 2 or len(returns) < 2:
                 depot_data["invalid"].append(drug)
