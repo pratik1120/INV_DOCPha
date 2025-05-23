@@ -116,35 +116,37 @@ def extract_warehouse_current_stock(file):
 def compute_combined_report(depots, sample_sales, warehouse_current_stock=None):
     combined = {}
 
-    # Aggregate average monthly sales and stock from all depots per drug
     for depot in depots:
-        for drug, sales_list in depot["sales"].items():
-            avg_sales = sum(sales_list)
+        for drug in depot["sales"]:
+            sales = sum(depot["sales"][drug])
+            returns = sum(depot["returns"].get(drug, []))
+            net = sales - returns
+            net_monthly_demand = net / user_defined_months
+
             if drug not in combined:
                 combined[drug] = {
-                    "avg_sum": 0.0,
-                    "total_stock": 0,
+                    "net_monthly_demand": 0.0,
+                    "total_stock": 0
                 }
-            combined[drug]["avg_sum"] += avg_sales
+
+            combined[drug]["net_monthly_demand"] += net_monthly_demand
             combined[drug]["total_stock"] += depot["inventory"].get(drug, 0)
 
-    # Build final report dict
+    # Final report generation
     report = {}
     for drug, values in combined.items():
-        avg_sum = values["avg_sum"]  # sum of avg sales from all depots
+        net_demand = values["net_monthly_demand"]
         total_stock = values["total_stock"]
 
-        # Your exact formula for Stock to Hold:
-        # ((sum_of_avg_all_depots) * user_defined_months) / (4 * user_defined_months)
-        stock_to_hold = round((avg_sum * user_defined_months) / (4 * user_defined_months), 2)
+        buffer = net_demand * 0.1
+        stock_to_hold = round((net_demand * LEAD_TIME_MONTHS) + buffer, 2)
         diff = total_stock - stock_to_hold
 
-        # Sample sales & warehouse stock info if available
         sample_sale = sample_sales.get(drug, 0)
         warehouse_stock = warehouse_current_stock.get(drug, 0) if warehouse_current_stock else None
 
         row = {
-            "Total Avg Monthly Demand": round(avg_sum, 2),
+            "Total Net Monthly Demand": round(net_demand, 2),
             "Stock to Hold": stock_to_hold,
             "Current Stock (All Depots)": total_stock,
             "Excess": round(max(0, diff), 2),
@@ -159,6 +161,7 @@ def compute_combined_report(depots, sample_sales, warehouse_current_stock=None):
         report[drug] = row
 
     return report
+
 
 
 def display_depot_report(depot_name, file):
