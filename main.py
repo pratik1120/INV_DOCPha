@@ -1,3 +1,4 @@
+
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -17,7 +18,7 @@ warehouse_file = st.file_uploader("Upload Warehouse Depo Excel (For Samples)", t
 warehouse_stock_file = st.file_uploader("Upload Warehouse Excel (Unfiltered – For Current Stock)", type=["xlsx", "xls"], key="warehouse_stock")
 
 LEAD_TIME_MONTHS = 6
-
+user_defined_months = st.sidebar.number_input("Number of Months to Divide Sample Sales", min_value=1, max_value=12, value=5, step=1)
 
 def extract_depot_data(uploaded_file):
     depot_data = {"sales": {}, "returns": {}, "inventory": {}, "invalid": []}
@@ -113,60 +114,51 @@ def extract_warehouse_current_stock(file):
 
 
 def compute_combined_report(depots, sample_sales, warehouse_current_stock=None):
-    combined_sales = {}
+    combined = {}
 
-    all_drugs = set()
-    for d in depots:
-        all_drugs.update(d["sales"].keys())
-    all_drugs.update(sample_sales.keys())
+    # Aggregate average monthly sales and stock from all depots per drug
+    for depot in depots:
+        for drug, sales_list in depot["sales"].items():
+            avg_sales = sum(sales_list)
+            if drug not in combined:
+                combined[drug] = {
+                    "avg_sum": 0.0,
+                    "total_stock": 0,
+                }
+            combined[drug]["avg_sum"] += avg_sales
+            combined[drug]["total_stock"] += depot["inventory"].get(drug, 0)
 
-    if warehouse_current_stock:
-        all_drugs.update(warehouse_current_stock.keys())
+    # Build final report dict
+    report = {}
+    for drug, values in combined.items():
+        avg_sum = values["avg_sum"]  # sum of avg sales from all depots
+        total_stock = values["total_stock"]
 
-    for drug in all_drugs:
-        sales_lists = [d["sales"].get(drug, []) for d in depots]
-        return_lists = [d["returns"].get(drug, []) for d in depots]
-        stock_list = [d["inventory"].get(drug, 0) for d in depots]
+        # Your exact formula for Stock to Hold:
+        # ((sum_of_avg_all_depots) * user_defined_months) / (4 * user_defined_months)
+        stock_to_hold = round((avg_sum * user_defined_months) / (4 * user_defined_months), 2)
+        diff = total_stock - stock_to_hold
 
-        sales_lists = [x + [0] * (5 - len(x)) if len(x) < 5 else x[:5] for x in sales_lists]
-        return_lists = [x + [0] * (5 - len(x)) if len(x) < 5 else x[:5] for x in return_lists]
+        # Sample sales & warehouse stock info if available
+        sample_sale = sample_sales.get(drug, 0)
+        warehouse_stock = warehouse_current_stock.get(drug, 0) if warehouse_current_stock else None
 
-        total_sales = [sum(x) for x in zip(*sales_lists)] if sales_lists else [0] * 5
-        total_returns = [sum(x) for x in zip(*return_lists)] if return_lists else [0] * 5
-
-        sample_total = sample_sales.get(drug, 0)
-        sample_monthly = sample_total / 5 if sample_total else 0
-        total_sales = [s + sample_monthly for s in total_sales]
-
-        total_sales_sum = sum(total_sales)
-        total_returns_sum = sum(total_returns)
-        total_net_sales = total_sales_sum - total_returns_sum
-
-        if total_net_sales == 0:
-            continue
-
-        avg_demand = total_net_sales / 5
-        demand = round(avg_demand, 2)
-
-        # Include warehouse stock
-        warehouse_stock = warehouse_current_stock.get(drug, 0) if warehouse_current_stock else 0
-        stock = sum(stock_list) + warehouse_stock
-
-        buffer = 0.1 * demand
-        stock_to_hold = round((demand * LEAD_TIME_MONTHS) + buffer, 2)
-        stock_diff = stock - stock_to_hold
-
-        combined_sales[drug] = {
-            "Net Monthly Demand": demand,
-            "Combined Stock": stock,
+        row = {
+            "Total Avg Monthly Demand": round(avg_sum, 2),
             "Stock to Hold": stock_to_hold,
-            "Excess": round(max(0, stock_diff), 2),
-            "Shortfall": round(max(0, -stock_diff), 2),
-            "Status": "Optimal" if abs(stock_diff) < 0.01 else ("Overstocked" if stock_diff > 0 else "Understocked"),
-            "Includes Samples": "Yes" if sample_total != 0 else "No"
+            "Current Stock (All Depots)": total_stock,
+            "Excess": round(max(0, diff), 2),
+            "Shortfall": round(max(0, -diff), 2),
+            "Status": "Optimal" if abs(diff) < 0.01 else ("Overstocked" if diff > 0 else "Understocked"),
+            "Sample Sales": sample_sale,
         }
 
-    return combined_sales
+        if warehouse_current_stock is not None:
+            row["Warehouse Current Stock"] = warehouse_stock
+
+        report[drug] = row
+
+    return report
 
 
 def display_depot_report(depot_name, file):
@@ -182,8 +174,10 @@ def display_depot_report(depot_name, file):
 
     report = []
     for drug in data["sales"]:
-        net = [(s - r) for s, r in zip(data["sales"][drug], data["returns"].get(drug, []))]
-        avg = round(sum(net) / len(net), 2)
+        sales = sum(data["sales"][drug])
+        returns = sum(data["returns"].get(drug, []))
+        net = sales - returns
+        avg = round(net / user_defined_months, 2)
         buffer = avg * 0.1
         stock_to_hold = round((avg * LEAD_TIME_MONTHS) + buffer, 2)
         stock = data["inventory"].get(drug, 0)
